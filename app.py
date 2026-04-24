@@ -1,66 +1,76 @@
 import streamlit as st
-import requests
-import re
-from datetime import datetime
+import pandas as pd
+from parser import extract_data
+from sheets import save_to_sheets, get_sheet
 
-# ==========================================
-# LOGIKA PARSING (Copy dari scraper kamu)
-# ==========================================
-def extract_data_from_text(text):
-    # (Di sini kamu bisa pakai fungsi extract_penyelenggara, dll. 
-    # yang sudah kamu buat di script sebelumnya)
-    # Sebagai contoh sederhana, kita ambil logika dasar:
-    data = {
-        "judul": "Judul Lomba (Terdeteksi)",
-        "penyelenggara": "DEMA FEBI UIN SATU", # Contoh logika
-        "deadline": datetime.now().strftime("%Y-%m-%d"),
-        "biaya": "Gratis",
-        "link": "-",
-        "deskripsi": text[:100] + "..."
-    }
-    return data
+st.set_page_config(page_title="KSEUNRIPEDIA Admin", layout="wide")
 
-# ==========================================
-# UI APLIKASI
-# ==========================================
-st.set_page_config(page_title="Input Data Lomba DIKLAT", layout="wide")
-st.title("🚀 Input Data Lomba - KSE UNRI")
+st.title("👨‍💻 Admin Panel KSEUNRIPEDIA")
+st.markdown("Gunakan tool ini untuk ekstraksi data lomba secara otomatis ke Google Sheets.")
 
-# Sidebar untuk input mentah
-raw_text = st.text_area("Paste Data Mentah Lomba di Sini:", height=200)
+# --- INPUT ---
+raw_text = st.text_area("Paste Data Mentah Lomba:", height=200, placeholder="Masukkan caption IG atau teks pengumuman di sini...")
 
-if st.button("Proses Data"):
+if st.button("🚀 Proses Data"):
     if raw_text:
-        # Panggil fungsi parsing
-        parsed = extract_data_from_text(raw_text)
-        st.session_state['data'] = parsed
-        st.success("Data berhasil diproses! Silakan periksa kembali di bawah.")
+        st.session_state['parsed'] = extract_data(raw_text)
+        st.success("Ekstraksi berhasil! Silakan cek hasil di bawah.")
     else:
-        st.warning("Mohon masukkan teks terlebih dahulu.")
+        st.error("Teks input tidak boleh kosong.")
 
-# Form Input (Pre-filled dengan data hasil parsing)
-if 'data' in st.session_state:
-    d = st.session_state['data']
+# --- FORM REVIEW ---
+if 'parsed' in st.session_state:
+    d = st.session_state['parsed']
+    st.divider()
+    st.subheader("📝 Review & Validasi Data")
     
-    with st.form("form_submission"):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            judul = st.text_input("Judul Kegiatan", value=d['judul'])
-            kategori = st.selectbox("Kategori", ["Nasional", "Internasional", "Regional"])
-            penyelenggara = st.text_input("Penyelenggara", value=d['penyelenggara'])
-        
-        with col2:
-            deadline = st.date_input("Deadline")
-            biaya = st.selectbox("Biaya", ["Gratis", "Berbayar"])
-            link = st.text_input("Link Pendaftaran", value=d['link'])
+    with st.form("editor_form"):
+        c1, c2 = st.columns(2)
+        with c1:
+            judul = st.text_input("JUDUL KEGIATAN", value=d['Judul'])
+            kategori = st.selectbox("KATEGORI", ["Nasional", "Internasional", "Regional"])
+            bidang = st.selectbox("BIDANG LOMBA", ["Akademik & Bahasa", "Teknologi & Digital", "Seni & Budaya", "Bisnis", "Olahraga"])
+            partisipasi = st.selectbox("JENIS PARTISIPASI", ["Individu", "Kelompok", "Keduanya"])
+            penyelenggara = st.text_input("PENYELENGGARA", value=d['Penyelenggara'])
+            lokasi = st.selectbox("LOKASI", ["Online", "Offline", "Hybrid"])
             
-        deskripsi = st.text_area("Deskripsi Singkat", value=d['deskripsi'])
-        divisi = st.text_input("Divisi", value="DIKLAT", disabled=True)
-        
-        submitted = st.form_submit_button("Kirim ke Google Form")
-        
-        if submitted:
-            # Panggil fungsi kirim() kamu di sini
-            # kirim(data_dari_form)
-            st.success(f"Data '{judul}' berhasil dikirim!")
+        with c2:
+            mulai = st.text_input("TANGGAL MULAI PENDAFTARAN", value=d['Mulai'])
+            deadline = st.text_input("DEADLINE PENDAFTARAN", value=d['Deadline'])
+            level = st.text_input("LEVEL PESERTA", value="Mahasiswa/Siswa")
+            biaya = st.text_input("BIAYA PENDAFTARAN", value=d['Biaya'])
+            link = st.text_input("LINK PENDAFTARAN", value=d['Link'])
+            narahubung = st.text_input("NARAHUBUNG", value=d['Narahubung'])
+
+        benefit = st.text_area("BENEFIT / HADIAH", value="-")
+        deskripsi = st.text_area("DESKRIPSI SINGKAT", value=d['Deskripsi'])
+        divisi = st.selectbox("DIVISI PENGINPUT", ["DIKLAT", "KOMINFO", "RAGAM", "COMDEV"])
+
+        if st.form_submit_button("✅ Simpan & Publish ke Sheet"):
+            final_data = {
+                "Judul": judul, "Kategori": kategori, "Bidang": bidang,
+                "Partisipasi": partisipasi, "Penyelenggara": penyelenggara,
+                "Mulai": mulai, "Deadline": deadline, "Lokasi": lokasi,
+                "Level": level, "Biaya": biaya, "Benefit": benefit,
+                "Link": link, "Narahubung": narahubung, "Deskripsi": deskripsi,
+                "Divisi": divisi
+            }
+            try:
+                save_to_sheets(final_data)
+                st.success("Data berhasil terkirim!")
+                del st.session_state['parsed']
+                st.rerun()
+            except Exception as e:
+                st.error(f"Gagal simpan: {e}")
+
+# --- PREVIEW SHEET ---
+st.divider()
+st.subheader("📊 Data Terinput (Real-time)")
+if st.button("Refresh Data"):
+    st.rerun()
+
+try:
+    df = pd.DataFrame(get_sheet().get_all_records())
+    st.dataframe(df.tail(10)) # Tampilkan 10 data terakhir
+except:
+    st.info("Koneksi ke Sheet belum tersedia atau Sheet masih kosong.")
